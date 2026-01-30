@@ -1,206 +1,163 @@
 const axios = require('axios');
 
-// Base URL for LeetCode API
-const LEETCODE_API_BASE = 'https://alfa-leetcode-api.onrender.com';
+const GRAPHQL_URL = "https://leetcode.com/graphql";
 
-// Cache for problems data (since it's large and doesn't change frequently)
-let problemsCache = null;
-let problemsCacheTime = null;
-const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+const fetchUserProfile = async (username) => {
+  const query = `
+    query userProfile($username: String!) {
+      matchedUser(username: $username) {
+        submitStatsGlobal {
+          acSubmissionNum {
+            difficulty
+            count
+          }
+        }
 
-/**
- * Fetch all problems with their tags for topic analysis
- * Uses caching to avoid repeated API calls
- * @returns {Promise<Array>} Array of all problems with tags
- */
-async function getAllProblemsWithTags() {
-  try {
-    // Check if cache is valid
-    if (problemsCache && problemsCacheTime && Date.now() - problemsCacheTime < CACHE_DURATION) {
-      console.log('Using cached problems data');
-      return problemsCache;
+        userCalendar {
+          submissionCalendar
+        }
+
+        contestBadge {
+          name
+        }
+      }
+
+      userContestRanking(username: $username) {
+        rating
+        globalRanking
+        attendedContestsCount
+      }
     }
+  `;
 
-    console.log('Fetching problems from API...');
-    const response = await axios.get(`${LEETCODE_API_BASE}/problems`, {
-      timeout: 30000
-    });
+  const res = await axios.post(GRAPHQL_URL, {
+    query,
+    variables: { username },
+  });
 
-    problemsCache = response.data.problems || [];
-    problemsCacheTime = Date.now();
+  const user = res.data.data.matchedUser;
+  const contest = res.data.data.userContestRanking;
 
-    return problemsCache;
-  } catch (error) {
-    console.error('Error fetching problems:', error.message);
-    // Return empty array if API fails
-    return [];
+  const stats = user.submitStatsGlobal.acSubmissionNum;
+
+  return {
+    totalSolved: stats.find((x) => x.difficulty === "All").count,
+
+    difficultyBreakdown: {
+      easy: stats.find((x) => x.difficulty === "Easy").count,
+      medium: stats.find((x) => x.difficulty === "Medium").count,
+      hard: stats.find((x) => x.difficulty === "Hard").count,
+    },
+
+    calendar: JSON.parse(user.userCalendar.submissionCalendar),
+
+    contest: {
+      rating: contest?.rating || null,
+      globalRanking: contest?.globalRanking || null,
+      attendedContests: contest?.attendedContestsCount || 0,
+    },
+  };
+};
+
+const fetchSolvedProblemSlugs = async (username) => {
+  const query = `
+    query recentAcSubmissions($username: String!) {
+      recentAcSubmissionList(username: $username, limit: 500) {
+        titleSlug
+      }
+    }
+  `;
+
+  const res = await axios.post(GRAPHQL_URL, {
+    query,
+    variables: { username },
+  });
+
+  const submissions = res.data.data.recentAcSubmissionList;
+
+  // Unique slugs
+  return [...new Set(submissions.map((s) => s.titleSlug))];
+};
+
+const buildTopicAnalysis = async (slugs) => {
+  const topicCounts = {};
+
+  for (let slug of slugs) {
+    const tags = await fetchProblemTags(slug);
+
+    for (let tag of tags) {
+      topicCounts[tag] = (topicCounts[tag] || 0) + 1;
+    }
   }
-}
 
-/**
- * Build topic analysis by mapping solved problems to their tags
- * @param {Array<string>} solvedProblems - Array of solved problem titleSlugs
- * @param {Array<Object>} allProblems - Array of all problems with tags
- * @returns {Object} Topic → count mapping
- */
-function buildTopicAnalysis(solvedProblems, allProblems) {
-  const topicMap = {};
+  return topicCounts;
+};
 
-  // Create a map of titleSlug to problem for faster lookup
-  const problemMap = {};
-  allProblems.forEach(problem => {
-    if (problem.titleSlug) {
-      problemMap[problem.titleSlug] = problem;
+const fetchProblemTags = async (slug) => {
+  const query = `
+    query questionTags($slug: String!) {
+      question(titleSlug: $slug) {
+        topicTags {
+          name
+        }
+      }
     }
+  `;
+
+  const res = await axios.post(GRAPHQL_URL, {
+    query,
+    variables: { slug },
   });
 
-  // Count solved problems by topic
-  solvedProblems.forEach(titleSlug => {
-    const problem = problemMap[titleSlug];
-    if (problem && problem.topicTags && Array.isArray(problem.topicTags)) {
-      problem.topicTags.forEach(tag => {
-        const tagName = tag.name || tag;
-        topicMap[tagName] = (topicMap[tagName] || 0) + 1;
-      });
-    }
-  });
+  return res.data.data.question.topicTags.map((t) => t.name);
+};
 
-  // Sort topics by count (descending)
-  const sortedTopics = Object.entries(topicMap)
-    .sort((a, b) => b[1] - a[1])
-    .reduce((obj, [key, val]) => {
-      obj[key] = val;
-      return obj;
-    }, {});
-
-  return sortedTopics;
-}
 
 /**
- * Main function to get LeetCode user analytics
- * @param {string} username - LeetCode username
- * @returns {Promise<Object>} Structured analytics JSON
+ * Main Service:
+ * Returns full LeetCode analytics report for a username
  */
-async function getLeetCodeUserAnalytics(username) {
+const getLeetCodeUserAnalytics = async (username) => {
   try {
-    // Validate username
-    if (!username || typeof username !== 'string' || username.trim() === '') {
-      return {
-        success: false,
-        error: 'Invalid username provided'
-      };
-    }
+    console.log("Fetching analytics for:", username);
 
-    username = username.trim().toLowerCase();
+    // -----------------------------------
+    // 1. Fetch Profile Stats + Calendar + Contest
+    // -----------------------------------
+    const profileData = await fetchUserProfile(username);
 
-    // Fetch user stats
-    console.log(`Fetching LeetCode analytics for: ${username}`);
-    
-    const [userStats, userCalendar, userContest, solvedProblems] = await Promise.allSettled([
-      axios.get(`${LEETCODE_API_BASE}/${username}`, { timeout: 10000 }),
-      axios.get(`${LEETCODE_API_BASE}/${username}/calendar`, { timeout: 10000 }),
-      axios.get(`${LEETCODE_API_BASE}/${username}/contest`, { timeout: 10000 }),
-      axios.get(`${LEETCODE_API_BASE}/${username}/solved`, { timeout: 10000 })
-    ]);
+    // -----------------------------------
+    // 2. Fetch Solved Problem Slugs (Accepted)
+    // -----------------------------------
+    const solvedSlugs = await fetchSolvedProblemSlugs(username);
 
-    // Check if user stats were successfully fetched
-    if (userStats.status === 'rejected') {
-      return {
-        success: false,
-        error: 'User not found or API error',
-        username: username
-      };
-    }
+    // -----------------------------------
+    // 3. Fetch Topic Tags + Build Topic Count
+    // -----------------------------------
+    const topicAnalysis = await buildTopicAnalysis(solvedSlugs);
 
-    // Extract user stats
-    const userStatsData = userStats.value.data || {};
-    const totalSolved = userStatsData.totalSolved || 0;
-    const easySolved = userStatsData.easySolved || 0;
-    const mediumSolved = userStatsData.mediumSolved || 0;
-    const hardSolved = userStatsData.hardSolved || 0;
-
-    // Extract calendar data
-    const calendarData = {};
-    if (userCalendar.status === 'fulfilled') {
-      const calendar = userCalendar.value.data?.submissionCalendar || {};
-      Object.assign(calendarData, calendar);
-    }
-
-    // Extract contest data
-    let contestData = {
-      rating: 0,
-      globalRanking: 0,
-      attendedContests: 0
-    };
-
-    if (userContest.status === 'fulfilled') {
-      const contestStats = userContest.value.data || {};
-      contestData = {
-        rating: contestStats.rating || 0,
-        globalRanking: contestStats.ranking || 0,
-        attendedContests: contestStats.attendedContestsCount || 0
-      };
-    }
-
-    // Extract solved problems and build topic analysis
-    let topicAnalysis = {};
-    if (solvedProblems.status === 'fulfilled') {
-      const solvedList = solvedProblems.value.data?.solvedProblem || [];
-      
-      // Extract titleSlugs from solved problems
-      const titleSlugs = solvedList.map(problem => {
-        if (typeof problem === 'string') return problem;
-        if (problem.titleSlug) return problem.titleSlug;
-        return null;
-      }).filter(slug => slug !== null);
-
-      // Fetch all problems with tags
-      const allProblems = await getAllProblemsWithTags();
-
-      // Build topic analysis
-      topicAnalysis = buildTopicAnalysis(titleSlugs, allProblems);
-    }
-
-    // Construct final response
-    const analytics = {
-      success: true,
-      username: userStatsData.username || username,
-      totalSolved: totalSolved,
-      difficultyBreakdown: {
-        easy: easySolved,
-        medium: mediumSolved,
-        hard: hardSolved
-      },
-      calendar: {
-        submissionCalendar: calendarData
-      },
-      contest: contestData,
-      topicAnalysis: topicAnalysis,
-      fetchedAt: new Date().toISOString()
-    };
-
-    return analytics;
-  } catch (error) {
-    console.error('Error in getLeetCodeUserAnalytics:', error.message);
+    // -----------------------------------
+    // 4. Final Response JSON
+    // -----------------------------------
     return {
-      success: false,
-      error: 'An error occurred while fetching LeetCode analytics',
-      message: error.message
-    };
-  }
-}
+      username,
 
-/**
- * Clear problems cache (useful for manual refresh)
- */
-function clearProblemsCache() {
-  problemsCache = null;
-  problemsCacheTime = null;
-  console.log('Problems cache cleared');
-}
+      totalSolved: profileData.totalSolved,
+
+      difficultyBreakdown: profileData.difficultyBreakdown,
+
+      calendar: profileData.calendar,
+
+      contest: profileData.contest,
+
+      topicAnalysis,
+    };
+  } catch (err) {
+    console.error("Analytics Error:", err.message);
+    throw new Error("Failed to fetch LeetCode analytics.");
+  }
+};
 
 module.exports = {
   getLeetCodeUserAnalytics,
-  clearProblemsCache,
-  getAllProblemsWithTags
 };
