@@ -1,8 +1,12 @@
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
+const connectDB = require('./config/db');
 
 const app = express();
+
+// Connect to MongoDB
+connectDB();
 
 // Middleware
 app.use(cors());
@@ -14,9 +18,14 @@ app.get('/', (req, res) => {
   res.json({ message: 'Welcome to the API' });
 });
 
-// Import routes here
-// const authRoutes = require('./routes/auth');
-// app.use('/api/auth', authRoutes);
+// Import routes
+const authRoutes = require('./routes/auth');
+const userRoutes = require('./routes/users');
+const leetcodeRoutes = require('./routes/leetcode');
+
+app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/leetcode', leetcodeRoutes);
 
 const PORT = process.env.PORT || 5000;
 

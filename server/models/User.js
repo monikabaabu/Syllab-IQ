@@ -1,30 +1,30 @@
-// User model placeholder
-// TODO: Set up database (MongoDB/PostgreSQL/MySQL)
-// TODO: Define user schema
-
-/*
-Example MongoDB schema:
 const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema({
   name: {
     type: String,
-    required: true
+    required: [true, 'Name is required'],
+    trim: true
   },
   email: {
     type: String,
-    required: true,
-    unique: true
+    required: [true, 'Email is required'],
+    unique: true,
+    lowercase: true,
+    trim: true,
+    match: [/^\S+@\S+\.\S+$/, 'Please enter a valid email']
   },
   password: {
     type: String,
-    required: true
+    required: [true, 'Password is required'],
+    minlength: 6
   },
-  createdAt: {
-    type: Date,
-    default: Date.now
+  rollNumber: {
+    type: String,
+    trim: true
   }
+}, {
+  timestamps: true
 });
 
 module.exports = mongoose.model('User', userSchema);
-*/
