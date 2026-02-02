@@ -1,4 +1,7 @@
 .platform-breakdown-card {
+    background: rgba(255, 255, 255, 0.05);
+
+  padding: 2rem;
   height: 100%;
 }
 

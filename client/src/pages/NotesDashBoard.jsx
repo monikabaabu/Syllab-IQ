@@ -42,38 +42,91 @@ function NotesDashboard() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages]);
 
-  const handleChatSubmit = async (e) => {
-    e.preventDefault();
-    if (!chatInput.trim() || chatLoading) return;
+  // const handleChatSubmit = async (e) => {
+  //   e.preventDefault();
+  //   if (!chatInput.trim() || chatLoading) return;
 
-    const userMessage = chatInput.trim();
-    setChatInput('');
+  //   const userMessage = chatInput.trim();
+  //   setChatInput('');
     
-    // Add user message to chat
-    setChatMessages(prev => [...prev, { role: 'user', content: userMessage }]);
-    setChatLoading(true);
+  //   // Add user message to chat
+  //   setChatMessages(prev => [...prev, { role: 'user', content: userMessage }]);
+  //   setChatLoading(true);
 
-    try {
-      const response = await axios.post('http://localhost:8000/chat/', {
+  //   try {
+  //     const response = await axios.post('http://localhost:8000/chat/', {
+  //       msg: userMessage,
+  //       k: 3
+  //     });
+
+  //     // Add assistant response
+  //     setChatMessages(prev => [...prev, { 
+  //       role: 'assistant', 
+  //       content: response.data.response || 'Sorry, I couldn\'t process that request.'
+  //     }]);
+  //   } catch (error) {
+  //     console.error('Chat error:', error);
+  //     setChatMessages(prev => [...prev, { 
+  //       role: 'assistant', 
+  //       content: 'Sorry, I\'m having trouble connecting. Please make sure the AI server is running.'
+  //     }]);
+  //   } finally {
+  //     setChatLoading(false);
+  //   }
+  // };
+const handleChatSubmit = async (e) => {
+  e.preventDefault();
+  if (!chatInput.trim() || chatLoading) return;
+
+  const userMessage = chatInput.trim();
+  setChatInput('');
+
+  // Show user message immediately
+  setChatMessages(prev => [
+    ...prev,
+    { role: 'user', content: userMessage }
+  ]);
+
+  setChatLoading(true);
+
+  try {
+    const response = await axios.post(
+      'https://rag-test-kabb.onrender.com/chat/',
+      {
         msg: userMessage,
         k: 3
-      });
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        }
+      }
+    );
 
-      // Add assistant response
-      setChatMessages(prev => [...prev, { 
-        role: 'assistant', 
-        content: response.data.response || 'Sorry, I couldn\'t process that request.'
-      }]);
-    } catch (error) {
-      console.error('Chat error:', error);
-      setChatMessages(prev => [...prev, { 
-        role: 'assistant', 
-        content: 'Sorry, I\'m having trouble connecting. Please make sure the AI server is running.'
-      }]);
-    } finally {
-      setChatLoading(false);
-    }
-  };
+    const botReply =
+      response.data?.response ||
+      'No response from assistant.';
+
+    setChatMessages(prev => [
+      ...prev,
+      { role: 'assistant', content: botReply }
+    ]);
+
+  } catch (error) {
+    console.error('Chat error:', error);
+
+    setChatMessages(prev => [
+      ...prev,
+      {
+        role: 'assistant',
+        content: '⚠️ Unable to reach the study assistant right now.'
+      }
+    ]);
+  } finally {
+    setChatLoading(false);
+  }
+};
 
   const fetchNotes = async () => {
     try {
@@ -125,24 +178,80 @@ function NotesDashboard() {
       setUploadError('');
       setUploadSuccess('');
 
-      const formData = new FormData();
-      formData.append('pdf', uploadFile);
-      formData.append('name', uploadName.trim());
-      if (user?.id) {
-        formData.append('userId', user.id);
-      }
+      // const formData = new FormData();
+      // formData.append('pdf', uploadFile);
+      // formData.append('name', uploadName.trim());
+      // if (user?.id) {
+      //   formData.append('userId', user.id);
+      // }
 
-      await axios.post('http://localhost:5000/api/pdfs', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        }
-      });
+      // await axios.post('http://localhost:5000/api/pdfs', formData, {
+      //   headers: {
+      //     'Content-Type': 'multipart/form-data'
+      //   }
+      // });
 
-      setUploadSuccess('Notes uploaded successfully!');
-      setUploadFile(null);
-      setUploadName('');
-      fetchNotes(); // Refresh the notes list
-      
+      // setUploadSuccess('Notes uploaded successfully!');
+      // setUploadFile(null);
+      // setUploadName('');
+      // fetchNotes(); // Refresh the notes list
+      const buildNotesFormData = () => {
+  const fd = new FormData();
+  fd.append('pdf', uploadFile);          // for notes API
+  fd.append('name', uploadName.trim());
+  if (user?.id) fd.append('userId', user.id);
+  return fd;
+};
+
+const buildIngestFormData = () => {
+  const fd = new FormData();
+  fd.append('file', uploadFile);         // 👈 IMPORTANT
+  return fd;
+};
+
+try {
+  setUploading(true);
+  setUploadError('');
+  setUploadSuccess('');
+
+  // 1️⃣ Upload to notes backend
+  await axios.post(
+    'http://localhost:5000/api/pdfs',
+    buildNotesFormData(),
+    { headers: { 'Content-Type': 'multipart/form-data' } }
+  );
+
+  // 2️⃣ Upload to ingest (FastAPI RAG backend)
+  await axios.post(
+    'https://rag-test-kabb.onrender.com/ingest/pdf',
+    buildIngestFormData(),
+    { headers: { 'Content-Type': 'multipart/form-data' } }
+  );
+
+  setUploadSuccess('Notes uploaded and indexed successfully!');
+  setUploadFile(null);
+  setUploadName('');
+  fetchNotes();
+
+  setTimeout(() => {
+    setShowUploadModal(false);
+    setUploadSuccess('');
+  }, 1500);
+
+} catch (error) {
+  console.error('Upload error:', error);
+
+  if (error.response?.status === 422) {
+    setUploadError('Invalid file format for ingest API');
+  } else {
+    setUploadError('Upload failed. Please try again.');
+  }
+} finally {
+  setUploading(false);
+}
+
+
+
       setTimeout(() => {
         setShowUploadModal(false);
         setUploadSuccess('');

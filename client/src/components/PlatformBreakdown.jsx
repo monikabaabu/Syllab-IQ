@@ -29,7 +29,7 @@ function PlatformBreakdown({ data }) {
   };
 
   return (
-    <div className="card platform-breakdown-card">
+    <div className="card platform-breakdown-card" style={{ backgroundColor: 'rgba(165, 148, 148, 0.03)', padding: '2rem' }}>
       <h3>🌐 Platform Distribution</h3>
       
       <ResponsiveContainer width="100%" height={280}>

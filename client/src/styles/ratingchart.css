@@ -4,6 +4,7 @@
 
 .rating-charts-section > h2 {
   color: #22c55e;
+  background: rgba(255, 255, 255, 0.05);
   margin-bottom: 0.5rem;
 }
 
